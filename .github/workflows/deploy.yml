@@ -1,0 +1,102 @@
+name: "Terraform Deploy"
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  terraform:
+    name: "Terraform Action"
+    runs-on: ubuntu-latest
+    
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: ./terraform
+
+      - name: Terraform Plan
+        run: terraform plan
+        working-directory: ./terraform
+
+      - name: Terraform Import Existing Resources
+        run: |
+          # absolute path here for import
+          TF_PATH="${{ github.workspace }}/terraform"
+          SG_ID=$(aws ec2 describe-security-groups --filters Name=group-name,Values=devops-assignment-sg --query 'SecurityGroups[0].GroupId' --output text)
+          
+          if [ "$SG_ID" != "None" ]; then
+            terraform -chdir="$TF_PATH" import aws_security_group.allow_ssh_http $SG_ID || echo "Import failed, continuing..."
+          fi
+        continue-on-error: true
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
+        working-directory: ./terraform
+      
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          printf "%s" "${{ secrets.SSH_PRIVATE_KEY }}" > ./ansible/private_key.pem
+          chmod 600 ./ansible/private_key.pem
+          
+          # make sure key pair is correct
+          echo "Verifying key format..."
+          ssh-keygen -l -f ./ansible/private_key.pem || (echo "ERROR: Invalid Key Format in Secrets" && exit 1)
+
+      - name: Debug Key File
+        run: |
+          echo "Checking file size and start/end lines..."
+          ls -l ./ansible/private_key.pem
+          head -n 1 ./ansible/private_key.pem
+          tail -n 1 ./ansible/private_key.pem
+          ssh-keygen -l -f ./ansible/private_key.pem
+
+      - name: Run Ansible Playbook
+        run: |
+          TF_PATH="${{ github.workspace }}/terraform"
+          RAW_IP=$(terraform -chdir="$TF_PATH" output -raw server_public_ip)
+          
+          echo "Connecting to IP: $RAW_IP"
+          
+          ansible-playbook playbook.yml \
+            -i "$RAW_IP," \
+            -u ubuntu \
+            --private-key private_key.pem \
+            --ssh-common-args='-o StrictHostKeyChecking=no'
+        working-directory: ./ansible
+      
+      - name: Debug Prometheus Service
+        run: |
+          TF_PATH="${{ github.workspace }}/terraform"
+          RAW_IP=$(terraform -chdir="$TF_PATH" output -raw server_public_ip)
+          ssh -i ./ansible/private_key.pem -o StrictHostKeyChecking=no ubuntu@$RAW_IP "sudo systemctl status prometheus --no-pager && sudo journalctl -u prometheus --no-pager | tail -n 20"
+
+      - name: Verify Nginx Logging (Filebeat)
+        run: |
+          TF_PATH="${{ github.workspace }}/terraform"
+          RAW_IP=$(terraform -chdir="$TF_PATH" output -raw server_public_ip)
+          
+          echo "Verifying logs on: $RAW_IP"
+          
+          # Trigger traffic for logs
+          curl -s http://$RAW_IP > /dev/null
+          curl -s http://$RAW_IP/test-log-entry > /dev/null
+          
+          # 3. filebeat processing timeout
+          sleep 5
+          
+          ssh -i ./ansible/private_key.pem -o StrictHostKeyChecking=no ubuntu@$RAW_IP \
+            "sudo tail -n 20 /tmp/filebeat/filebeat-output.log"

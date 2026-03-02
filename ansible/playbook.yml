@@ -1,0 +1,180 @@
+---
+- name: Configure Web Server and Monitoring
+  hosts: all
+  become: yes
+  gather_facts: no
+
+  tasks:
+    - name: Allow all monitoring ports in UFW
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - 80
+        - 22
+        - 9090
+        - 9100
+
+    - name: Wait for SSH to become reachable
+      wait_for_connection:
+        delay: 10
+        timeout: 300
+
+    - name: Gather facts
+      setup:
+
+    - name: Install Nginx
+      apt:
+        name: nginx
+        state: present
+        update_cache: yes
+
+    - name: Start and enable Nginx
+      systemd:
+        name: nginx
+        state: started
+        enabled: yes
+
+    - name: Deploy simple web app
+      copy:
+        content: "<h1>Task 2 & 3 Complete: Infrastructure Automation + Monitoring + Logging</h1>"
+        dest: /var/www/html/index.html
+
+    - name: Download Node Exporter
+      get_url:
+        url: https://github.com/prometheus/node_exporter/releases/download/v1.7.0/node_exporter-1.7.0.linux-amd64.tar.gz
+        dest: /tmp/node_exporter.tar.gz
+
+    - name: Extract Node Exporter
+      unarchive:
+        src: /tmp/node_exporter.tar.gz
+        dest: /opt/
+        remote_src: yes
+
+    - name: Create Node Exporter Service
+      copy:
+        dest: /etc/systemd/system/node_exporter.service
+        content: |
+          [Unit]
+          Description=Node Exporter
+          After=network.target
+          [Service]
+          User=ubuntu
+          ExecStart=/opt/node_exporter-1.7.0.linux-amd64/node_exporter
+          Restart=always
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Start Node Exporter
+      systemd:
+        name: node_exporter
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
+
+    - name: Download Prometheus
+      get_url:
+        url: https://github.com/prometheus/prometheus/releases/download/v2.45.0/prometheus-2.45.0.linux-amd64.tar.gz
+        dest: /tmp/prometheus.tar.gz
+
+    - name: Extract Prometheus
+      unarchive:
+        src: /tmp/prometheus.tar.gz
+        dest: /opt/
+        remote_src: yes
+
+    - name: Ensure Prometheus data directory exists
+      file:
+        path: /opt/prometheus-2.45.0.linux-amd64/data
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Create Prometheus Alert Rules
+      copy:
+        dest: /opt/prometheus-2.45.0.linux-amd64/alert_rules.yml
+        owner: ubuntu
+        group: ubuntu
+        content: |
+          groups:
+            - name: instance_alerts
+              rules:
+                - alert: InstanceDown
+                  expr: up == 0
+                  for: 1m
+                  labels:
+                    severity: critical
+                  annotations:
+                    summary: "Instance is down"
+                    description: "Node Exporter has been offline for more than 1 minute."
+
+    - name: Create Prometheus Configuration
+      copy:
+        dest: /opt/prometheus-2.45.0.linux-amd64/prometheus.yml
+        owner: ubuntu
+        group: ubuntu
+        content: |
+          global:
+            scrape_interval: 15s
+          rule_files:
+            - "alert_rules.yml"
+          scrape_configs:
+            - job_name: 'node_exporter'
+              static_configs:
+                - targets: ['localhost:9100']
+
+    - name: Create Prometheus Systemd Service
+      copy:
+        dest: /etc/systemd/system/prometheus.service
+        content: |
+          [Unit]
+          Description=Prometheus
+          After=network.target
+          [Service]
+          User=ubuntu
+          WorkingDirectory=/opt/prometheus-2.45.0.linux-amd64
+          ExecStart=/opt/prometheus-2.45.0.linux-amd64/prometheus --config.file=prometheus.yml --storage.tsdb.path=data
+          Restart=always
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Start and Enable Prometheus
+      systemd:
+        name: prometheus
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
+
+    - name: Download Filebeat
+      get_url:
+        url: https://artifacts.elastic.co/downloads/beats/filebeat/filebeat-7.17.0-amd64.deb
+        dest: /tmp/filebeat.deb
+
+    - name: Install Filebeat
+      apt:
+        deb: /tmp/filebeat.deb
+
+    - name: Enable Nginx Log Module in Filebeat
+      shell: filebeat modules enable nginx
+
+    - name: Configure Filebeat for local log capture
+      copy:
+        dest: /etc/filebeat/filebeat.yml
+        content: |
+          filebeat.inputs:
+          - type: log
+            enabled: true
+            paths:
+              - /var/log/nginx/*.log
+          output.file:
+            path: "/tmp/filebeat"
+            filename: filebeat-output.log
+          logging.level: info
+
+    - name: Start and Enable Filebeat
+      systemd:
+        name: filebeat
+        state: restarted
+        enabled: yes
