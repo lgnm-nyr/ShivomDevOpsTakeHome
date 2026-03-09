@@ -68,7 +68,7 @@ resource "aws_security_group" "allow_ssh_http" {
 resource "aws_instance" "web_server_final" {
   ami                         = data.aws_ami.ubuntu.id
   instance_type               = "t3.micro"
-  key_name                    = "assignment-final-key" #aws key name
+  key_name                    = "test-key" #aws key name
   vpc_security_group_ids      = [aws_security_group.allow_ssh_http.id]
 
   tags = {
