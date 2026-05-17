@@ -1,6 +1,6 @@
 # PROVIDER CONFIG
 provider "aws" {
-  region = "eu-west-2" # London
+  region = "eu-west-2" # London UK
 }
 
 # AMI LOOKUP (Bypasses "AMI Not Found" errors)
