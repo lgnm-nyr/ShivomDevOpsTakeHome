@@ -11,8 +11,9 @@
         port: "{{ item }}"
         proto: tcp
       loop:
-        - 80
         - 22
+        - 80
+        - 8000
         - 9090
         - 9100
 
@@ -29,6 +30,37 @@
         name: nginx
         state: present
         update_cache: yes
+
+    - name: Install FastAPI Python packages
+      pip:
+        name:
+          - fastapi
+          - uvicorn
+          - prometheus-fastapi-instrumentator
+
+    - name: Create FastAPI systemd service
+      copy:
+        dest: /etc/systemd/system/fastapi.service
+        content: |
+          [Unit]
+          Description=FastAPI Service
+          After=network.target
+
+          [Service]
+          User=ubuntu
+          WorkingDirectory=/home/ubuntu/backend
+          ExecStart=/usr/local/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Start FastAPI Service
+      systemd:
+        name: fastapi
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
 
     - name: Start and enable Nginx
       systemd:
@@ -124,6 +156,10 @@
             - job_name: 'node_exporter'
               static_configs:
                 - targets: ['localhost:9100']
+                
+            - job_name: 'fastapi'
+              static_configs:
+                - targets: ['localhost:8000']
 
     - name: Create Prometheus Systemd Service
       copy:
