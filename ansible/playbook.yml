@@ -125,10 +125,6 @@
               static_configs:
                 - targets: ['localhost:9100']
 
-            - job_name: 'fastapi'
-              static_configs:
-                - targets: ['localhost:8000']
-
     - name: Create Prometheus Systemd Service
       copy:
         dest: /etc/systemd/system/prometheus.service
