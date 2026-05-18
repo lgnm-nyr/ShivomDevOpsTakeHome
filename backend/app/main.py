@@ -5,6 +5,7 @@ app = FastAPI()
 
 Instrumentator().instrument(app).expose(app)
 
+
 @app.get("/")
 def read_root():
     return {"message": "DevOps Sample App Running"}
@@ -13,3 +14,4 @@ def read_root():
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
