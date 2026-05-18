@@ -31,6 +31,12 @@
         state: present
         update_cache: yes
 
+    - name: Install FastAPI dependencies
+      apt:
+        name:
+          - python3-pip
+        state: present
+
     - name: Install FastAPI Python packages
       pip:
         name:
@@ -156,7 +162,7 @@
             - job_name: 'node_exporter'
               static_configs:
                 - targets: ['localhost:9100']
-                
+
             - job_name: 'fastapi'
               static_configs:
                 - targets: ['localhost:8000']
